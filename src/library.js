@@ -1708,8 +1708,6 @@ LibraryManager.library = {
     // void *dlopen(const char *file, int mode);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/dlopen.html
     var searchpaths = [];
-    var searchpaths = "ben was here";
-    var searchpaths = [];
     var filename;
     if (filenameAddr === 0) {
       filename = '__self__';
