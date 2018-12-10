@@ -620,8 +620,9 @@ def get_exported_implemented_functions(all_exported_functions, all_implemented, 
   funcs = set(metadata['exports'])
   export_bindings = shared.Settings.EXPORT_BINDINGS
   # export_all = shared.Settings.EXPORT_ALL
-  export_all = False # Patch from fabric_web to control the number of exports
-  aliases_exports = metadata['aliases'].values()
+  # BEN_TODO: Patch from fabric_web to control the number of exports
+  export_all = False if shared.Settings.MAIN_MODULE == 2 else shared.Settings.EXPORT_ALL
+  aliases_exports = metadata['aliases'].values() if shared.Settings.MAIN_MODULE == 2 else []
 
   for key in all_implemented:
     if export_all or key in all_exported_functions or key in aliases_exports or (export_bindings and key.startswith('_emscripten_bind')):

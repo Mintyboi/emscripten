@@ -2854,7 +2854,6 @@ class JS(object):
       assert Settings.WASM
       assert Settings.EMULATED_FUNCTION_POINTERS
       args = ''
-      func_args =''
       body = '''
         var args = Array.prototype.slice.call(arguments);
         return Module['wasmTable'].get(args[0]).apply(null, args.slice(1));
@@ -2862,9 +2861,17 @@ class JS(object):
     else:
       legal_sig = JS.legalize_sig(sig) # TODO: do this in extcall, jscall?
       args = ','.join(['a' + str(i) for i in range(1, len(legal_sig))])
-      func_args = 'index' + (',' if args else '') + args
+      args_store = args
+      args = 'index' + (',' if args else '') + args
       ret = 'return ' if sig[0] != 'v' else ''
-      body = '%smoduleFunctionCache[index](%s);' % (ret, args)
+
+      # BEN_TODO: We are calling the wasmtable directly from the invoke call here
+      if (Settings.MAIN_MODULE == 2):
+        body = '%smoduleFunctionCache[index](%s);' % (ret, args_store)
+      else:
+        body = '%sModule["dynCall_%s"](%s);' % (ret, sig, args)
+
+      
     # C++ exceptions are numbers, and longjmp is a string 'longjmp'
     ret = '''function%s(%s) {
   var sp = stackSave();
@@ -2875,7 +2882,7 @@ class JS(object):
     if (typeof e !== 'number' && e !== 'longjmp') throw e;
     Module["setThrew"](1, 0);
   }
-}''' % ((' invoke_' + sig) if named else '', func_args, body)
+}''' % ((' invoke_' + sig) if named else '', args, body)
     return ret
 
   @staticmethod
