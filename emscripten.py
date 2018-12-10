@@ -1275,7 +1275,7 @@ def create_exports(exported_implemented_functions, in_table, function_table_data
   quote = quoter()
   asm_runtime_funcs = create_asm_runtime_funcs()
   all_exported = exported_implemented_functions + asm_runtime_funcs + function_tables(function_table_data)
-  if shared.Settings.EMULATED_FUNCTION_POINTERS:
+  if not shared.Settings.WASM and shared.Settings.EMULATED_FUNCTION_POINTERS:
     all_exported += in_table
   exports = []
   for export in sorted(set(all_exported)):
