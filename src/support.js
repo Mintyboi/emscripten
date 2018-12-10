@@ -195,6 +195,9 @@ function loadWebAssemblyModule(binary, loadAsync) {
   // be to inspect the binary directly).
   var proxyHandler = {
     'get': function(obj, prop) {
+      if (prop.startsWith('Module')) {
+        console.log('proxyHandler prop:' + prop);
+      }
       if (prop in obj) {
         return obj[prop]; // already present
       }
@@ -241,6 +244,7 @@ function loadWebAssemblyModule(binary, loadAsync) {
 #endif
 
   function postInstantiation(instance) {
+    populateFunctionCache();
     var exports = {};
 #if ASSERTIONS
     // the table should be unchanged
@@ -298,7 +302,9 @@ function loadWebAssemblyModule(binary, loadAsync) {
       return postInstantiation(result.instance);
     });
   } else {
+    console.log('WebAssembly.Instance+');
     var instance = new WebAssembly.Instance(new WebAssembly.Module(binary), info);
+    console.log('WebAssembly.Instance-');
     return postInstantiation(instance);
   }
 }

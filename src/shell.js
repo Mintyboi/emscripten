@@ -45,6 +45,19 @@ Module['quit'] = function(status, toThrow) {
 };
 Module['preRun'] = [];
 Module['postRun'] = [];
+var moduleFunctionCache = new Map();
+var populateFunctionCache = function() {
+  // Instantiate a new map or clear it before population
+  if (!moduleFunctionCache) {
+    moduleFunctionCache = new Map();
+  } else {
+    moduleFunctionCache.clear();
+  }
+  var len = 0;
+  for (var idx = 0, len = Module["wasmTable"].length; idx < len; ++idx) {
+    moduleFunctionCache[idx] = Module["wasmTable"].get(idx);
+  }
+}
 
 // Determine the runtime environment we are in. You can customize this by
 // setting the ENVIRONMENT setting at compile time (see settings.js).
