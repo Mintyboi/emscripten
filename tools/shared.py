@@ -2864,7 +2864,7 @@ class JS(object):
       args = ','.join(['a' + str(i) for i in range(1, len(legal_sig))])
       func_args = 'index' + (',' if args else '') + args
       ret = 'return ' if sig[0] != 'v' else ''
-      body = '%sModule["wasmTable"].get(index)(%s);' % (ret, args)
+      body = '%smoduleFunctionCache[index](%s);' % (ret, args)
     # C++ exceptions are numbers, and longjmp is a string 'longjmp'
     ret = '''function%s(%s) {
   var sp = stackSave();
