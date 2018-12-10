@@ -2843,7 +2843,6 @@ class JS(object):
 
   @staticmethod
   def make_invoke(sig, named=True):
-    print ("inside make_invoke, sig = {}".format(sig))
     if sig == 'X':
       # 'X' means the generic unknown signature, used in wasm dynamic linking
       # to indicate an invoke that the main JS may not have defined, so we
