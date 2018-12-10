@@ -619,9 +619,12 @@ def is_already_implemented(requested, pre, all_implemented):
 def get_exported_implemented_functions(all_exported_functions, all_implemented, metadata):
   funcs = set(metadata['exports'])
   export_bindings = shared.Settings.EXPORT_BINDINGS
-  export_all = shared.Settings.EXPORT_ALL
+  # export_all = shared.Settings.EXPORT_ALL
+  export_all = False # Patch from fabric_web to control the number of exports
+  aliases_exports = metadata['aliases'].values()
+
   for key in all_implemented:
-    if key in all_exported_functions or export_all or (export_bindings and key.startswith('_emscripten_bind')):
+    if export_all or key in all_exported_functions or key in aliases_exports or (export_bindings and key.startswith('_emscripten_bind')):
       funcs.add(key)
 
   funcs = list(funcs) + metadata['initializers']
