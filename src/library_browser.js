@@ -1,3 +1,8 @@
+// Copyright 2011 The Emscripten Authors.  All rights reserved.
+// Emscripten is available under two separate licenses, the MIT license and the
+// University of Illinois/NCSA Open Source License.  Both these licenses can be
+// found in the LICENSE file.
+
 //"use strict";
 
 // Utilities for browser environments
@@ -1191,7 +1196,7 @@ var LibraryBrowser = {
 #if OFFSCREEN_FRAMEBUFFER
       // If the current GL context is a proxied regular WebGL context, and was initialized with implicit swap mode on the main thread, and we are on the parent thread,
       // perform the swap on behalf of the user.
-      if (typeof GL !== 'undefined' && GL.currentContext && GLctxIsOnParentThread) {
+      if (typeof GL !== 'undefined' && GL.currentContext && GL.currentContextIsProxied) {
         var explicitSwapControl = {{{ makeGetValue('GL.currentContext', 0, 'i32') }}};
         if (!explicitSwapControl) _emscripten_webgl_commit_frame();
       }
@@ -1200,7 +1205,7 @@ var LibraryBrowser = {
 
 #if OFFSCREENCANVAS_SUPPORT
       // If the current GL context is an OffscreenCanvas, but it was initialized with implicit swap mode, perform the swap on behalf of the user.
-      if (typeof GL !== 'undefined' && GL.currentContext && !GLctxIsOnParentThread && !GL.currentContext.attributes.explicitSwapControl && GL.currentContext.GLctx.commit) {
+      if (typeof GL !== 'undefined' && GL.currentContext && !GL.currentContextIsProxied && !GL.currentContext.attributes.explicitSwapControl && GL.currentContext.GLctx.commit) {
         GL.currentContext.GLctx.commit();
       }
 #endif
@@ -1309,9 +1314,9 @@ var LibraryBrowser = {
   emscripten_force_exit__proxy: 'sync',
   emscripten_force_exit__sig: 'vi',
   emscripten_force_exit: function(status) {
-#if NO_EXIT_RUNTIME
+#if EXIT_RUNTIME == 0
 #if ASSERTIONS
-    warnOnce('emscripten_force_exit cannot actually shut down the runtime, as the build has NO_EXIT_RUNTIME set');
+    warnOnce('emscripten_force_exit cannot actually shut down the runtime, as the build does not have EXIT_RUNTIME set');
 #endif
 #endif
     Module['noExitRuntime'] = false;

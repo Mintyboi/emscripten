@@ -1,6 +1,11 @@
+# Copyright 2014 The Emscripten Authors.  All rights reserved.
+# Emscripten is available under two separate licenses, the MIT license and the
+# University of Illinois/NCSA Open Source License.  Both these licenses can be
+# found in the LICENSE file.
+
 import os, shutil, logging
 
-TAG = 'version_14'
+TAG = 'version_15'
 
 def get_with_configure(ports, settings, shared): # not currently used; no real need for configure on emscripten users' machines!
   if settings.USE_SDL == 2:

@@ -1,4 +1,9 @@
 /*
+ * Copyright 2010 The Emscripten Authors.  All rights reserved.
+ * Emscripten is available under two separate licenses, the MIT license and the
+ * University of Illinois/NCSA Open Source License.  Both these licenses can be
+ * found in the LICENSE file.
+ *
  * GL support. See http://kripken.github.io/emscripten-site/docs/porting/multimedia_and_graphics/OpenGL-support.html
  * for current status.
  */
@@ -21,7 +26,7 @@ var LibraryGL = {
     uniforms: [],
     shaders: [],
     vaos: [],
-    contexts: [],
+    contexts: {},
     currentContext: null,
     offscreenCanvases: {}, // DOM ID -> OffscreenCanvas mappings of <canvas> elements that have their rendering control transferred to offscreen.
     timerQueriesEXT: [],
@@ -392,6 +397,14 @@ var LibraryGL = {
           sizeBytes = 8;
           break;
         default:
+#if USE_WEBGL2
+          if (GL.currentContext.version >= 2 && (dataType == 0x8368 /* GL_UNSIGNED_INT_2_10_10_10_REV */ || dataType == 0x8D9F /* GL_INT_2_10_10_10_REV */)) {
+            sizeBytes = 4;
+            break;
+          } else {
+            // else fall through
+          }
+#endif
           console.error('Invalid vertex attribute data type GLenum ' + dataType + ' passed to GL function!');
       }
       if (dimension == 0x80E1 /* GL_BGRA */) {
@@ -536,7 +549,9 @@ var LibraryGL = {
         }
         if (!ctx) throw ':(';
       } catch (e) {
+#if GL_DEBUG
         out('Could not create canvas: ' + [errorInfo, e, JSON.stringify(webGLContextAttributes)]);
+#endif
         return 0;
       }
 
@@ -694,7 +709,11 @@ var LibraryGL = {
 #endif
 
     registerContext: function(ctx, webGLContextAttributes) {
-      var handle = GL.getNewId(GL.contexts);
+      var handle = _malloc(8); // Make space on the heap to store GL context attributes that need to be accessible as shared between threads.
+      {{{ makeSetValue('handle', 0, 'webGLContextAttributes["explicitSwapControl"]', 'i32')}}}; // explicitSwapControl
+#if USE_PTHREADS
+      {{{ makeSetValue('handle', 4, '_pthread_self()', 'i32')}}}; // the thread pointer of the thread that owns the control of the context
+#endif
       var context = {
         handle: handle,
         attributes: webGLContextAttributes,
@@ -712,12 +731,45 @@ var LibraryGL = {
       context.supportsWebGL2EntryPoints = (context.version >= 2) && (getChromeVersion() === false || getChromeVersion() >= 58);
 #endif
 
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      context.cannotHandleOffsetsInUniformArrayViews = (function(g) {
+        try {
+          var p = g.createProgram(); // Note: we do not delete this program so it stays part of the context we created, but that is ok - it does not do anything and we want to keep this detection size minimal.
+          function b(c, t) {
+            var s = g.createShader(t);
+            g.shaderSource(s, c);
+            g.compileShader(s);
+            return s;
+          }
+          g.attachShader(p, b("attribute vec4 p;void main(){gl_Position=p;}", g.VERTEX_SHADER));
+          g.attachShader(p, b("precision lowp float;uniform vec4 u;void main(){gl_FragColor=u;}", g.FRAGMENT_SHADER));
+          g.linkProgram(p);
+          var h = new Float32Array(8);
+          h[4] = 1;
+          g.useProgram(p);
+          var l = g.getUniformLocation(p, "u");
+          g.uniform4fv(l, h.subarray(4, 8)); // Uploading a 4-vector GL uniform from last four elements of array [0,0,0,0,1,0,0,0], i.e. uploading vec4=(1,0,0,0) at offset=4.
+          return !g.getUniform(p, l)[0]; // in proper WebGL we expect to read back the vector we just uploaded: (1,0,0,0). On buggy browser would instead have uploaded offset=0 of above array, i.e. vec4=(0,0,0,0)
+        } catch(e) { return false; } // If we get an exception, we assume we got some other error, and do not trigger this workaround.
+      })();
+#endif
+
       // Store the created context object so that we can access the context given a canvas without having to pass the parameters again.
       if (ctx.canvas) ctx.canvas.GLctxObject = context;
       GL.contexts[handle] = context;
       if (typeof webGLContextAttributes['enableExtensionsByDefault'] === 'undefined' || webGLContextAttributes['enableExtensionsByDefault']) {
         GL.initExtensions(context);
       }
+
+#if FULL_ES2
+      context.maxVertexAttribs = context.GLctx.getParameter(context.GLctx.MAX_VERTEX_ATTRIBS);
+      context.clientBuffers = [];
+      for (var i = 0; i < context.maxVertexAttribs; i++) {
+        context.clientBuffers[i] = { enabled: false, clientside: false, size: 0, type: 0, normalized: 0, stride: 0, ptr: 0, vertexAttribPointerAdaptor: null };
+      }
+
+      GL.generateTempBuffers(false, context);
+#endif
 
 #if OFFSCREEN_FRAMEBUFFER
       if (webGLContextAttributes['renderViaOffscreenBackBuffer']) GL.createOffscreenFramebuffer(context);
@@ -732,8 +784,22 @@ var LibraryGL = {
     },
 
     makeContextCurrent: function(contextHandle) {
+      // Deactivating current context?
+      if (!contextHandle) {
+        GLctx = Module.ctx = GL.currentContext = null;
+        return true;
+      }
       var context = GL.contexts[contextHandle];
-      if (!context) return false;
+      if (!context) {
+#if GL_DEBUG
+#if USE_PTHREADS
+        console.error('GL.makeContextCurrent() failed! WebGL context ' + contextHandle + ' does not exist, or was created on another thread!');
+#else
+        console.error('GL.makeContextCurrent() failed! WebGL context ' + contextHandle + ' does not exist!');
+#endif
+#endif
+        return false;
+      }
       GLctx = Module.ctx = context.GLctx; // Active WebGL context object.
       GL.currentContext = context; // Active Emscripten GL layer context object.
       return true;
@@ -747,6 +813,7 @@ var LibraryGL = {
       if (GL.currentContext === GL.contexts[contextHandle]) GL.currentContext = null;
       if (typeof JSEvents === 'object') JSEvents.removeAllHandlersOnTarget(GL.contexts[contextHandle].GLctx.canvas); // Release all JS event handlers on the DOM element that the GL context is associated with since the context is now deleted.
       if (GL.contexts[contextHandle] && GL.contexts[contextHandle].GLctx.canvas) GL.contexts[contextHandle].GLctx.canvas.GLctxObject = undefined; // Make sure the canvas object no longer refers to the context object so there are no GC surprises.
+      _free(GL.contexts[contextHandle]);
       GL.contexts[contextHandle] = null;
     },
 
@@ -761,16 +828,6 @@ var LibraryGL = {
       context.initExtensionsDone = true;
 
       var GLctx = context.GLctx;
-
-      context.maxVertexAttribs = GLctx.getParameter(GLctx.MAX_VERTEX_ATTRIBS);
-#if FULL_ES2
-      context.clientBuffers = [];
-      for (var i = 0; i < context.maxVertexAttribs; i++) {
-        context.clientBuffers[i] = { enabled: false, clientside: false, size: 0, type: 0, normalized: 0, stride: 0, ptr: 0, vertexAttribPointerAdaptor: null };
-      }
-
-      GL.generateTempBuffers(false, context);
-#endif
 
       // Detect the presence of a few extensions manually, this GL interop layer itself will need to know if they exist.
 #if LEGACY_GL_EMULATION
@@ -914,24 +971,6 @@ var LibraryGL = {
     if (GL.stringCache[name_]) return GL.stringCache[name_];
     var ret;
     switch(name_) {
-      case 0x1F00 /* GL_VENDOR */:
-      case 0x1F01 /* GL_RENDERER */:
-      case 0x9245 /* UNMASKED_VENDOR_WEBGL */:
-      case 0x9246 /* UNMASKED_RENDERER_WEBGL */:
-        ret = allocate(intArrayFromString(GLctx.getParameter(name_)), 'i8', ALLOC_NORMAL);
-        break;
-      case 0x1F02 /* GL_VERSION */:
-        var glVersion = GLctx.getParameter(GLctx.VERSION);
-        // return GLES version string corresponding to the version of the WebGL context
-#if USE_WEBGL2
-        if (GLctx.canvas.GLctxObject.version >= 2) glVersion = 'OpenGL ES 3.0 (' + glVersion + ')';
-        else
-#endif
-        {
-          glVersion = 'OpenGL ES 2.0 (' + glVersion + ')';
-        }
-        ret = allocate(intArrayFromString(glVersion), 'i8', ALLOC_NORMAL);
-        break;
       case 0x1F03 /* GL_EXTENSIONS */:
         var exts = GLctx.getSupportedExtensions();
         var gl_exts = [];
@@ -940,6 +979,37 @@ var LibraryGL = {
           gl_exts.push("GL_" + exts[i]);
         }
         ret = allocate(intArrayFromString(gl_exts.join(' ')), 'i8', ALLOC_NORMAL);
+        break;
+      case 0x1F00 /* GL_VENDOR */:
+      case 0x1F01 /* GL_RENDERER */:
+      case 0x9245 /* UNMASKED_VENDOR_WEBGL */:
+      case 0x9246 /* UNMASKED_RENDERER_WEBGL */:
+#if !GL_EMULATE_GLES_VERSION_STRING_FORMAT
+      case 0x1F02 /* GL_VERSION */:
+      case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
+#endif
+        var s = GLctx.getParameter(name_);
+        if (!s) {
+          GL.recordError(0x0500/*GL_INVALID_ENUM*/);
+#if GL_ASSERTIONS
+          err('GL_INVALID_ENUM in glGetString: Received empty parameter for query name ' + name_ + '!'); // This occurs e.g. if one attempts GL_UNMASKED_VENDOR_WEBGL when it is not supported.
+#endif
+        }
+        ret = allocate(intArrayFromString(s), 'i8', ALLOC_NORMAL);
+        break;
+
+#if GL_EMULATE_GLES_VERSION_STRING_FORMAT
+      case 0x1F02 /* GL_VERSION */:
+        var glVersion = GLctx.getParameter(GLctx.VERSION);
+        // return GLES version string corresponding to the version of the WebGL context
+#if USE_WEBGL2
+        if (GL.currentContext.version >= 2) glVersion = 'OpenGL ES 3.0 (' + glVersion + ')';
+        else
+#endif
+        {
+          glVersion = 'OpenGL ES 2.0 (' + glVersion + ')';
+        }
+        ret = allocate(intArrayFromString(glVersion), 'i8', ALLOC_NORMAL);
         break;
       case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
         var glslVersion = GLctx.getParameter(GLctx.SHADING_LANGUAGE_VERSION);
@@ -952,6 +1022,7 @@ var LibraryGL = {
         }
         ret = allocate(intArrayFromString(glslVersion), 'i8', ALLOC_NORMAL);
         break;
+#endif
       default:
         GL.recordError(0x0500/*GL_INVALID_ENUM*/);
 #if GL_ASSERTIONS
@@ -998,20 +1069,20 @@ var LibraryGL = {
         // WebGL doesn't have GL_NUM_COMPRESSED_TEXTURE_FORMATS (it's obsolete since GL_COMPRESSED_TEXTURE_FORMATS returns a JS array that can be queried for length),
         // so implement it ourselves to allow C++ GLES2 code get the length.
         var formats = GLctx.getParameter(0x86A3 /*GL_COMPRESSED_TEXTURE_FORMATS*/);
-        ret = formats.length;
+        ret = formats ? formats.length : 0;
         break;
 #if USE_WEBGL2
       case 0x821D: // GL_NUM_EXTENSIONS
-        if (GLctx.canvas.GLctxObject.version < 2) {
+        if (GL.currentContext.version < 2) {
           GL.recordError(0x0502 /* GL_INVALID_OPERATION */); // Calling GLES3/WebGL2 function with a GLES2/WebGL1 context
           return;
         }
         var exts = GLctx.getSupportedExtensions();
-        ret = 2*exts.length; // each extension is duplicated, first in unprefixed WebGL form, and then a second time with "GL_" prefix.
+        ret = 2 * exts.length; // each extension is duplicated, first in unprefixed WebGL form, and then a second time with "GL_" prefix.
         break;
       case 0x821B: // GL_MAJOR_VERSION
       case 0x821C: // GL_MINOR_VERSION
-        if (GLctx.canvas.GLctxObject.version < 2) {
+        if (GL.currentContext.version < 2) {
           GL.recordError(0x0500); // GL_INVALID_ENUM
           return;
         }
@@ -1076,31 +1147,20 @@ var LibraryGL = {
               }
             }
             return;
-          } else if (result instanceof WebGLBuffer ||
-                     result instanceof WebGLProgram ||
-                     result instanceof WebGLFramebuffer ||
-                     result instanceof WebGLRenderbuffer ||
-#if USE_WEBGL2
-                     result instanceof WebGLQuery ||
-                     result instanceof WebGLSampler ||
-                     result instanceof WebGLSync ||
-                     result instanceof WebGLTransformFeedback ||
-                     result instanceof WebGLVertexArrayObject ||
-#endif
-                     result instanceof WebGLTexture) {
-            ret = result.name | 0;
           } else {
-            GL.recordError(0x0500); // GL_INVALID_ENUM
-#if GL_ASSERTIONS
-            err('GL_INVALID_ENUM in glGet' + type + 'v: Unknown object returned from WebGL getParameter(' + name_ + ')!');
-#endif
-            return;
+            try {
+              ret = result.name | 0;
+            } catch(e) {
+              GL.recordError(0x0500); // GL_INVALID_ENUM
+              err('GL_INVALID_ENUM in glGet' + type + 'v: Unknown object returned from WebGL getParameter(' + name_ + ')! (error: ' + e + ')');
+              return;
+            }
           }
           break;
         default:
           GL.recordError(0x0500); // GL_INVALID_ENUM
 #if GL_ASSERTIONS
-          err('GL_INVALID_ENUM in glGetIntegerv: Native code calling glGet' + type + 'v(' + name_ + ') and it returns ' + result + ' of type ' + typeof(result) + '!');
+          err('GL_INVALID_ENUM in glGet' + type + 'v: Native code calling glGet' + type + 'v(' + name_ + ') and it returns ' + result + ' of type ' + typeof(result) + '!');
 #endif
           return;
       }
@@ -1116,8 +1176,9 @@ var LibraryGL = {
   },
 
 #if USE_WEBGL2
+  glGetStringi__sig: 'iii',
   glGetStringi: function(name, index) {
-    if (GLctx.canvas.GLctxObject.version < 2) {
+    if (GL.currentContext.version < 2) {
       GL.recordError(0x0502 /* GL_INVALID_OPERATION */); // Calling GLES3/WebGL2 function with a GLES2/WebGL1 context
       return 0;
     }
@@ -1261,7 +1322,11 @@ var LibraryGL = {
   glCompressedTexImage2D: function(target, level, internalFormat, width, height, border, imageSize, data) {
 #if USE_WEBGL2
     if (GL.currentContext.supportsWebGL2EntryPoints) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx['compressedTexImage2D'](target, level, internalFormat, width, height, border, HEAPU8, data, imageSize);
+      if (GLctx.currentPixelUnpackBufferBinding) {
+        GLctx['compressedTexImage2D'](target, level, internalFormat, width, height, border, imageSize, data);
+      } else {
+        GLctx['compressedTexImage2D'](target, level, internalFormat, width, height, border, HEAPU8, data, imageSize);
+      }
       return;
     }
 #endif
@@ -1272,7 +1337,11 @@ var LibraryGL = {
   glCompressedTexImage3D__sig: 'viiiiiiiii',
   glCompressedTexImage3D: function(target, level, internalFormat, width, height, depth, border, imageSize, data) {
     if (GL.currentContext.supportsWebGL2EntryPoints) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx['compressedTexImage3D'](target, level, internalFormat, width, height, depth, border, HEAPU8, data, imageSize);
+      if (GLctx.currentPixelUnpackBufferBinding) {
+        GLctx['compressedTexImage3D'](target, level, internalFormat, width, height, depth, border, imageSize, data);
+      } else {
+        GLctx['compressedTexImage3D'](target, level, internalFormat, width, height, depth, border, HEAPU8, data, imageSize);
+      }
     } else {
       GLctx['compressedTexImage3D'](target, level, internalFormat, width, height, depth, border, data ? {{{ makeHEAPView('U8', 'data', 'data+imageSize') }}} : null);
     }
@@ -1283,7 +1352,11 @@ var LibraryGL = {
   glCompressedTexSubImage2D: function(target, level, xoffset, yoffset, width, height, format, imageSize, data) {
 #if USE_WEBGL2
     if (GL.currentContext.supportsWebGL2EntryPoints) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx['compressedTexSubImage2D'](target, level, xoffset, yoffset, width, height, format, HEAPU8, data, imageSize);
+      if (GLctx.currentPixelUnpackBufferBinding) {
+        GLctx['compressedTexSubImage2D'](target, level, xoffset, yoffset, width, height, format, imageSize, data);
+      } else {
+        GLctx['compressedTexSubImage2D'](target, level, xoffset, yoffset, width, height, format, HEAPU8, data, imageSize);
+      }
       return;
     }
 #endif
@@ -1294,7 +1367,11 @@ var LibraryGL = {
   glCompressedTexSubImage3D__sig: 'viiiiiiiiiii',
   glCompressedTexSubImage3D: function(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data) {
     if (GL.currentContext.supportsWebGL2EntryPoints) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx['compressedTexSubImage3D'](target, level, xoffset, yoffset, zoffset, width, height, depth, format, HEAPU8, data, imageSize);
+      if (GLctx.currentPixelUnpackBufferBinding) {
+        GLctx['compressedTexSubImage3D'](target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data);
+      } else {
+        GLctx['compressedTexSubImage3D'](target, level, xoffset, yoffset, zoffset, width, height, depth, format, HEAPU8, data, imageSize);
+      }
     } else {
       GLctx['compressedTexSubImage3D'](target, level, xoffset, yoffset, zoffset, width, height, depth, format, data ? {{{ makeHEAPView('U8', 'data', 'data+imageSize') }}} : null);
     }
@@ -1709,6 +1786,10 @@ var LibraryGL = {
 
       if (id == GL.currArrayBuffer) GL.currArrayBuffer = 0;
       if (id == GL.currElementArrayBuffer) GL.currElementArrayBuffer = 0;
+#if USE_WEBGL2
+      if (id == GLctx.currentPixelPackBufferBinding) GLctx.currentPixelPackBufferBinding = 0;
+      if (id == GLctx.currentPixelUnpackBufferBinding) GLctx.currentPixelUnpackBufferBinding = 0;
+#endif
     }
   },
 
@@ -3166,6 +3247,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*4') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniform1fv(GL.uniforms[location], view);
   },
@@ -3194,6 +3278,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*8') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniform2fv(GL.uniforms[location], view);
   },
@@ -3223,6 +3310,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*12') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniform3fv(GL.uniforms[location], view);
   },
@@ -3253,6 +3343,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*16') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniform4fv(GL.uniforms[location], view);
   },
@@ -3369,6 +3462,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*16') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniformMatrix2fv(GL.uniforms[location], !!transpose, view);
   },
@@ -3404,6 +3500,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*36') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniformMatrix3fv(GL.uniforms[location], !!transpose, view);
   },
@@ -3446,6 +3545,9 @@ var LibraryGL = {
       }
     } else {
       view = {{{ makeHEAPView('F32', 'value', 'value+count*64') }}};
+#if WORKAROUND_OLD_WEBGL_UNIFORM_UPLOAD_IGNORED_OFFSET_BUG
+      if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
+#endif
     }
     GLctx.uniformMatrix4fv(GL.uniforms[location], !!transpose, view);
   },
@@ -3555,9 +3657,11 @@ var LibraryGL = {
       // the proper API function to call.
       GLctx.currentPixelPackBufferBinding = buffer;
     } else if (target == 0x88EC /*GL_PIXEL_UNPACK_BUFFER*/) {
-      // In WebGL 2 glTexImage2D, glTexSubImage2D, glTexImage3D and glTexSubImage3D entry points, we need to use a different WebGL 2 API function
-      // call when a buffer is bound to GL_PIXEL_UNPACK_BUFFER_BINDING point, so must keep track whether that binding point is non-null to know what
-      // is the proper API function to call.
+      // In WebGL 2 gl(Compressed)Tex(Sub)Image[23]D entry points, we need to
+      // use a different WebGL 2 API function call when a buffer is bound to
+      // GL_PIXEL_UNPACK_BUFFER_BINDING point, so must keep track whether that
+      // binding point is non-null to know what is the proper API function to
+      // call.
       GLctx.currentPixelUnpackBufferBinding = buffer;
     }
 #endif
@@ -3624,11 +3728,9 @@ var LibraryGL = {
   },
 #endif
 
-  glGetAttribLocation__sig: 'vii',
+  glGetAttribLocation__sig: 'iii',
   glGetAttribLocation: function(program, name) {
-    program = GL.programs[program];
-    name = Pointer_stringify(name);
-    return GLctx.getAttribLocation(program, name);
+    return GLctx.getAttribLocation(GL.programs[program], Pointer_stringify(name));
   },
 
   glGetActiveAttrib__sig: 'viiiiiii',
@@ -3926,6 +4028,7 @@ var LibraryGL = {
                             GL.shaders[shader]);
   },
 
+  glGetShaderPrecisionFormat__sig: 'viiii',
   glGetShaderPrecisionFormat: function(shaderType, precisionType, range, precision) {
     var result = GLctx.getShaderPrecisionFormat(shaderType, precisionType);
     {{{ makeSetValue('range', '0', 'result.rangeMin', 'i32') }}};
@@ -4031,7 +4134,7 @@ var LibraryGL = {
     // defaultFbo may not be present if 'renderViaOffscreenBackBuffer' was not enabled during context creation time,
     // i.e. setting -s OFFSCREEN_FRAMEBUFFER=1 at compilation time does not yet mandate that offscreen back buffer
     // is being used, but that is ultimately decided at context creation time.
-    GLctx.bindFramebuffer(target, framebuffer ? GL.framebuffers[framebuffer] : GLctx.canvas.GLctxObject.defaultFbo);
+    GLctx.bindFramebuffer(target, framebuffer ? GL.framebuffers[framebuffer] : GL.currentContext.defaultFbo);
 #else
     GLctx.bindFramebuffer(target, framebuffer ? GL.framebuffers[framebuffer] : null);
 #endif
@@ -7523,6 +7626,7 @@ var LibraryGL = {
   glGenVertexArraysOES: 'glGenVertexArrays',
   glDeleteVertexArraysOES: 'glDeleteVertexArrays',
   glBindVertexArrayOES: 'glBindVertexArray',
+  glIsVertexArrayOES: 'glIsVertexArray',
 
   // GLU
 
@@ -7647,7 +7751,7 @@ var LibraryGL = {
 #if GL_ASSERTIONS
     GL.validateVertexAttribPointer(size, type, stride, ptr);
 #endif
-    GLctx.vertexAttribIPointer(index, size, type, stride, ptr);
+    GLctx['vertexAttribIPointer'](index, size, type, stride, ptr);
   },
 // ~USE_WEBGL2
 #endif
@@ -7817,6 +7921,7 @@ var LibraryGL = {
   // OpenGL ES 2.0 draw buffer extensions compatibility
 
   glDrawBuffersEXT: 'glDrawBuffers',
+  glDrawBuffersWEBGL: 'glDrawBuffers',
 
   // passthrough functions with GLboolean parameters
 
@@ -7952,6 +8057,7 @@ if (LEGACY_GL_EMULATION) {
 function copyLibEntry(a, b) {
   LibraryGL[a] = LibraryGL[b];
   LibraryGL[a + '__postset'] = LibraryGL[b + '__postset'];
+  LibraryGL[a + '__proxy'] = LibraryGL[b + '__proxy'];
   LibraryGL[a + '__sig'] = LibraryGL[b + '__sig'];
   LibraryGL[a + '__asm'] = LibraryGL[b + '__asm'];
   LibraryGL[a + '__deps'] = LibraryGL[b + '__deps'].slice(0);
@@ -7959,7 +8065,7 @@ function copyLibEntry(a, b) {
 
 // GL proc address retrieval - allow access through glX and emscripten_glX, to allow name collisions with user-implemented things having the same name (see gl.c)
 keys(LibraryGL).forEach(function(x) {
-  if (x.substr(-6) == '__deps' || x.substr(-9) == '__postset' || x.substr(-5) == '__sig' || x.substr(-5) == '__asm' || x.substr(0, 2) != 'gl') return;
+  if (x.substr(-7) == '__proxy' || x.substr(-6) == '__deps' || x.substr(-9) == '__postset' || x.substr(-5) == '__sig' || x.substr(-5) == '__asm' || x.substr(0, 2) != 'gl') return;
   while (typeof LibraryGL[x] === 'string') {
     // resolve aliases right here, simpler for fastcomp
     copyLibEntry(x, LibraryGL[x]);
@@ -7971,7 +8077,10 @@ keys(LibraryGL).forEach(function(x) {
       var orig = dep;
       dep = 'emscripten_' + dep;
       var fixed = LibraryGL[x].toString().replace(new RegExp('_' + orig + '\\(', 'g'), '_' + dep + '(');
-      fixed = fixed.substr(0, 9) + '_' + y + fixed.substr(9);
+      // `function` is 8 characters, add space and an explicit name after if there isn't one already
+      if (fixed.startsWith('function(') || fixed.startsWith('function (')) {
+        fixed = fixed.substr(0, 8) + ' _' + y + fixed.substr(8);
+      }
       LibraryGL[x] = eval('(function() { return ' + fixed + ' })()');
     }
     return dep;
@@ -7984,4 +8093,4 @@ keys(LibraryGL).forEach(function(x) {
 mergeInto(LibraryManager.library, LibraryGL);
 
 assert(!(FULL_ES2 && LEGACY_GL_EMULATION), 'cannot emulate both ES2 and legacy GL');
-
+assert(!(FULL_ES3 && LEGACY_GL_EMULATION), 'cannot emulate both ES3 and legacy GL');
