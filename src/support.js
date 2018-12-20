@@ -421,6 +421,7 @@ function loadWebAssemblyModule(binary, loadAsync) {
 #endif
 
   function postInstantiation(instance) {
+    populateFunctionCache();
     var exports = {};
 #if ASSERTIONS
     // the table should be unchanged

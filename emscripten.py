@@ -1321,7 +1321,9 @@ function ftCall_%s(%s) {
           # otherwise, wasm emulated function pointers *without* emulated casts can just all
           # into the table
           table_access = "Module['wasmTable']"
-          table_read = table_access + '.get(x)'
+          # table_read = table_access + '.get(x)'
+          # BEN_TODO: This is a patch for function pointer caching to optimize dyn calls
+          table_read = "moduleFunctionCache[x]"
       else:
         table_access = 'FUNCTION_TABLE_' + sig
         if shared.Settings.SIDE_MODULE:

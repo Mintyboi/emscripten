@@ -1912,6 +1912,7 @@ function integrateWasmJS() {
     // handle a generated wasm instance, receiving its exports and
     // performing other necessary setup
     function receiveInstance(instance, module) {
+      populateFunctionCache();
       exports = instance.exports;
       if (exports.memory) mergeMemory(exports.memory);
       Module['asm'] = exports;
