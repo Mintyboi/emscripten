@@ -201,6 +201,12 @@ def fixup_metadata_tables(metadata):
     for k in metadata['tables'].keys():
       metadata['tables'][k] = metadata['tables'][k].replace('var FUNCTION_TABLE_', 'var SIDE_FUNCTION_TABLE_')
 
+  # BEN_TODO: This is for adding back invoke_X into emscripten.
+  # Refer to PR for more details - https://github.com/kripken/emscripten/pull/7497
+  if shared.Settings.MAIN_MODULE:
+    metadata['invokeFuncs'].append('invoke_X')
+    # Remove duplicates by converting it into a set because set don't allow duplicates
+    metadata['invokeFuncs'] = list(set(metadata['invokeFuncs']))
 
 def fixup_functions(funcs, metadata):
   # function table masks
