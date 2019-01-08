@@ -1113,7 +1113,9 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     if not shared.Settings.ONLY_MY_CODE and not shared.Settings.MINIMAL_RUNTIME:
       # Always need malloc and free to be kept alive and exported, for internal use and other modules
-      shared.Settings.EXPORTED_FUNCTIONS += ['_malloc', '_free']
+      # BEN_TODO: Adding '___dso_handle' due to an issue in emscripten
+      # For more info, see emscripten thread here https://github.com/kripken/emscripten/issues/7811
+      shared.Settings.EXPORTED_FUNCTIONS += ['_malloc', '_free','___dso_handle']
       if shared.Settings.WASM_BACKEND:
         # setjmp/longjmp and exception handling JS code depends on this so we
         # include it by default.  Should be elimiated by meta-DCE if unused.
