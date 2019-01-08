@@ -587,6 +587,7 @@ function addFunction(func, sig) {
   var ret = table.length;
   table.grow(1);
   table.set(ret, func);
+  populateFunctionCache();
   return ret;
 #else
   alignFunctionTables(); // XXX we should rely on this being an invariant
