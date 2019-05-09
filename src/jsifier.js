@@ -261,7 +261,7 @@ function JSify(data, functionsOnly) {
           var target = (MAIN_MODULE ? '' : 'parent') + "Module['_" + shortident + "']";
           var loader = '';
           var assertion = '';
-          loader = 'Module["mmh"](' + target + ');'
+          loader = 'Module["mmh"]();'
           if (ASSERTIONS) assertion = 'if (!' + target + ') abort("external function \'' + shortident + '\' is missing. perhaps a side module was not linked in? if this function was expected to arrive from a system library, try to build the MAIN_MODULE with EMCC_FORCE_STDLIBS=1 in the environment");';
           LibraryManager.library[shortident] = new Function(loader + assertion + "return " + target + ".apply(null, arguments);");
           if (SIDE_MODULE) {
