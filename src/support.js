@@ -351,6 +351,28 @@ function loadWebAssemblyModule(binary, flags) {
     neededDynlibs.push(name);
   }
 
+  // Kevin:ugly hack to work around minification issue across modules
+  function deMinifyasmLibraryArg() {
+    var basicVars = [tempDoublePtr, DYNAMICTOP_PTR, gb, fb]
+    for (var key in asmLibraryArg) {
+      if (asmLibraryArg.hasOwnProperty(key)) {
+          var value = asmLibraryArg[key];
+          if (typeof(value) === 'function') {
+              asmLibraryArg[value.name] = value;
+          } else if (typeof(value) === 'number') {
+            if (basicVars.indexOf(value) === -1){
+              console.log("Error!!! prop:" +  key + ":" + value + "does not correspond to one of the basic vars");
+            }
+          } 
+      }
+    }
+
+    asmLibraryArg.tempDoublePtr = tempDoublePtr;
+    asmLibraryArg.DYNAMICTOP_PTR = DYNAMICTOP_PTR;
+    asmLibraryArg.gb = gb;
+    asmLibraryArg.fb = fb;
+  }
+
   // loadModule loads the wasm module after all its dependencies have been loaded.
   // can be called both sync/async.
   function loadModule() {
@@ -370,6 +392,7 @@ function loadWebAssemblyModule(binary, flags) {
     // here, we just zero the whole thing, which is suboptimal, but should at least resolve bugs
     // from uninitialized memory.
     for (var i = memoryBase; i < memoryBase + memorySize; ++i) HEAP8[i] = 0;
+    deMinifyasmLibraryArg();
     // prepare env imports
     var env = asmLibraryArg;
     // TODO: use only __memory_base and __table_base, need to update asm.js backend

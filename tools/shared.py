@@ -2603,13 +2603,18 @@ class Building(object):
     if not Settings.LINKABLE:
       # if we are optimizing for size, shrink the combined wasm+JS
       # TODO: support this when a symbol map is used
-      if expensive_optimizations and not emit_symbol_map:
-        js_file = Building.metadce(js_file, wasm_file, minify_whitespace=minify_whitespace, debug_info=debug_info)
+      # if expensive_optimizations and not emit_symbol_map:
+      #   js_file = Building.metadce(js_file, wasm_file, minify_whitespace=minify_whitespace, debug_info=debug_info)
+      
+      # Kevin: ignore meta-DCE because PGC is not exporting Emscripten functions correctly
+      if expensive_optimizations:
+      #   js_file = Building.metadce(js_file, wasm_file, minify_whitespace=minify_whitespace, debug_info=debug_info)
         # now that we removed unneeded communication between js and wasm, we can clean up
         # the js some more.
         passes = ['AJSDCE']
         if minify_whitespace:
           passes.append('minifyWhitespace')
+        print('running post-meta-DCE cleanup on shell code: ' + ' '.join(passes))
         logger.debug('running post-meta-DCE cleanup on shell code: ' + ' '.join(passes))
         js_file = Building.acorn_optimizer(js_file, passes)
         # also minify the names used between js and wasm, if we emitting JS (then the JS knows how to load the minified names)
