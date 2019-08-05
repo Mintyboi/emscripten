@@ -353,17 +353,12 @@ function loadWebAssemblyModule(binary, flags) {
 
   // Kevin:ugly hack to work around minification issue across modules
   function deMinifyasmLibraryArg() {
-    var basicVars = [tempDoublePtr, DYNAMICTOP_PTR, gb, fb]
     for (var key in asmLibraryArg) {
       if (asmLibraryArg.hasOwnProperty(key)) {
           var value = asmLibraryArg[key];
           if (typeof(value) === 'function') {
               asmLibraryArg[value.name] = value;
-          } else if (typeof(value) === 'number') {
-            if (basicVars.indexOf(value) === -1){
-              console.log("Error!!! prop:" +  key + ":" + value + "does not correspond to one of the basic vars");
-            }
-          } 
+          }
       }
     }
 
