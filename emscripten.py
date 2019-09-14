@@ -858,7 +858,7 @@ def get_all_exported_functions(function_table_data):
 
 
 def get_all_implemented(forwarded_json, metadata):
-  return metadata['implementedFunctions'] + list(forwarded_json['Functions']['implementedFunctions'].keys()) # XXX perf?
+  return set(metadata['implementedFunctions']).union(forwarded_json['Functions']['implementedFunctions'])
 
 
 def check_all_implemented(all_implemented, pre):
