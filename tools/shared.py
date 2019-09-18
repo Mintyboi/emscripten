@@ -2697,6 +2697,18 @@ class Building(object):
     return Building.acorn_optimizer(js_file, passes, extra_info=json.dumps(extra_info))
 
   @staticmethod
+  def write_mapping_to_file(js_file, mapping):
+    logger.debug('inject the minified mapping to the js file as a js object')
+    missing_import_mapping = {k: v for k, v in mapping.items() if Building.missing_imports.get(k)}
+    if missing_import_mapping:
+      mapping_object = 'Module["mapping"]={'
+      lastItem = missing_import_mapping.popitem()
+      for orig_name, minified_name  in missing_import_mapping.items():
+        mapping_object += minified_name + ':"' + orig_name + '",'
+      mapping_object += lastItem[1] + ':"' + lastItem[0] + '"}'
+      with open(js_file, 'a') as f:
+        f.write(mapping_object)
+  @staticmethod
   def minify_wasm_imports_and_exports(js_file, wasm_file, minify_whitespace, minify_exports, debug_info):
     logger.debug('minifying wasm imports and exports')
     # run the pass
@@ -2717,10 +2729,12 @@ class Building(object):
     if minify_whitespace:
       passes.append('minifyWhitespace')
     extra_info = {'mapping': mapping}
+    Building.write_mapping_to_file(js_file, mapping)
     return Building.acorn_optimizer(js_file, passes, extra_info=json.dumps(extra_info))
 
   # the exports the user requested
   user_requested_exports = []
+  missing_imports = {}
 
   @staticmethod
   def is_ar(filename):

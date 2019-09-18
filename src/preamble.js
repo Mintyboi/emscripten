@@ -886,9 +886,28 @@ function getBinaryPromise() {
 // Create the wasm instance.
 // Receives the wasm imports, returns the exports.
 function createWasm(env) {
+  var proxyHandler = {
+    'get': function(obj, prop) {
+      if (prop in obj) {
+        return obj[prop]; // already present
+      }
+      var funcName = prop;
+      if (Module["mapping"] && Module["mapping"][prop]) {
+        funcName = Module["mapping"][prop];
+      }
+      return env[prop] = function() {
+        if (!Module[funcName])
+          Module["mmh"](funcName);
+#if ASSERTIONS
+        assert(Module[funcName], 'missing linked function ' + funcName + '. perhaps a side module was not linked in? if this function was expected to arrive from a system library, try to build the MAIN_MODULE with EMCC_FORCE_STDLIBS=1 in the environment');
+#endif
+        return Module[funcName].apply(null, arguments);
+      };
+    }
+  };
   // prepare imports
   var info = {
-    'env': env
+    env: new Proxy(env, proxyHandler)
 #if WASM_BACKEND == 0
     ,
     'global': {

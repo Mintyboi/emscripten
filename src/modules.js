@@ -45,6 +45,7 @@ var Functions = {
   implementedFunctions: {},
   libraryFunctions: {}, // functions added from the library. value 2 means asmLibraryFunction
   unimplementedFunctions: {}, // library etc. functions that we need to index, maps id to signature
+  sideFunctions: {},
 
   nextIndex: firstTableIndex, // Start at a non-0 (even, see below) value
   neededTables: set('v', 'vi', 'ii', 'iii'), // signatures that appeared (initialized with library stuff

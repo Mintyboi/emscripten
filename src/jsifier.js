@@ -207,11 +207,14 @@ function JSify(data, functionsOnly) {
           var assertion = '';
           loader = 'Module["mmh"]();'
           if (ASSERTIONS) assertion = 'if (!' + target + ') abort("external function \'' + shortident + '\' is missing. perhaps a side module was not linked in? if this function was expected to arrive from a system library, try to build the MAIN_MODULE with EMCC_FORCE_STDLIBS=1 in the environment");';
-          LibraryManager.library[shortident] = new Function(loader + assertion + "return " + target + ".apply(null, arguments);");
+          //LibraryManager.library[shortident] = new Function(loader + assertion + "return " + target + ".apply(null, arguments);");
           if (SIDE_MODULE) {
+			      LibraryManager.library[shortident] = new Function(loader + assertion + "return " + target + ".apply(null, arguments);");
             // no dependencies, just emit the thunk
             Functions.libraryFunctions[finalName] = 1;
             return processLibraryFunction(LibraryManager.library[shortident], ident, finalName);
+          } else {
+            Functions.sideFunctions[finalName] = 1;
           }
           noExport = true;
         }
@@ -301,6 +304,8 @@ function JSify(data, functionsOnly) {
           if (processedSnippet == snippet) throw 'Failed to regex parse function to add pthread proxying preamble to it! Function: ' + snippet;
           contentText = processedSnippet;
           proxiedFunctionTable.push(finalName);
+        } else if (typeof snippet === 'undefined') {
+          contentText = '';
         } else {
           contentText = snippet; // Regular JS function that will be executed in the context of the calling thread.
         }
@@ -321,7 +326,7 @@ function JSify(data, functionsOnly) {
       }
       // asm module exports are done in emscripten.py, after the asm module is ready. Here
       // we also export library methods as necessary.
-      if ((EXPORT_ALL || (finalName in EXPORTED_FUNCTIONS)) && !noExport) {
+      if ((EXPORT_ALL || (finalName in EXPORTED_FUNCTIONS)) && !noExport && contentText) {
         contentText += '\nModule["' + finalName + '"] = ' + finalName + ';';
       }
       if (!LibraryManager.library[ident + '__asm']) {
