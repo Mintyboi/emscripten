@@ -20,5 +20,7 @@ def run(filename):
   # In the future we might force a particular python version here.
   # Python on Windows does not provide `python2` but instead `py` that receives version parameter
   # python = ['py', '-2'] if sys.platform.startswith('win') else ['python2']
-  python = sys.executable
+  #TODO - Tao we set EM_PYTHON else it defaults to something we dont want
+  #python = shared.PYTHON
+  python = os.getenv('EM_PYTHON', sys.executable)
   sys.exit(subprocess.call([python, os.path.realpath(filename) + '.py'] + sys.argv[1:]))
