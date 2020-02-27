@@ -525,7 +525,8 @@ function JSify(data, functionsOnly) {
     }
     if (PROXY_TO_WORKER) {
       print('if (ENVIRONMENT_IS_WORKER) {\n');
-      print(read('webGLWorker.js'));
+      //TODO webgl
+      //print(read('webGLWorker.js'));
       print(processMacros(preprocess(read('proxyWorker.js'), 'proxyWorker.js')));
       print('}');
     }
