@@ -1547,19 +1547,176 @@ def create_asm_setup(debug_tables, function_table_data, invoke_function_names, m
 
     for extern in metadata['externs']:
       asm_setup += 'var g$' + extern + ' = function() {' + check(extern) + '\n  return ' + side + 'Module["' + extern + '"];\n}\n'
+    
+    asm_setup += 'var externFunctions = ['
     for extern in metadata['externFunctions']:
-      barename, sig = extern.split('$')
+      asm_setup += '"{}",'.format(extern)
+    asm_setup += '];\n\n'
+
+    asm_setup += '''
+      var populatefpaccessors = function() {{
+        const typeCodes = {{
+          'i': 0x7f, // i32
+          'j': 0x7e, // i64
+          'f': 0x7d, // f32
+          'd': 0x7c, // f64
+        }};
+        var typesArr = [];
+        var typeSectionArr = [
+          0x01, // id: types section,
+          0x00, // length: 0 (placeholder)
+          0x01, // count: 1 (placeholder)
+        ];
+        var importsArr = [
+          0x02, // id: imports section,
+          0x00, // length: 0 (placeholder)
+          0x01, // count: 1 (placeholder)
+        ];
+        var exportsArr = [
+          0x07, // id: exports section,
+          0x00, // length: 0 (placeholder)
+          0x01, // count: 1 (placeholder)
+        ];
+        var funcMap = {{}};
+
+        // Starting the wasm module byte array here.
+        // Rest of the module (types / imports / exports) are populated in appendFunction
+        var wasmModuleArr = [
+          0x00, 0x61, 0x73, 0x6d, // magic ("\0asm")
+          0x01, 0x00, 0x00, 0x00, // version: 1
+        ]
+
+        // credit: logic taken from https://www.reddit.com/r/WebAssembly/comments/9vq019/is_anyone_learning_webassembly_in_binary_im_stuck/
+        function lebLoopUntil(value, doShift, isDone) {{
+          const result = [];
+          while (true) {{
+            const byte = value & 0x7f;
+            value = doShift(value);
+            if (isDone(value, byte)) {{
+              result.push(byte);
+              return result;
+            }} else {{
+              result.push(byte | 0x80);
+            }}
+          }}
+        }}
+
+        // To avoid wasting too many bits on representing small values, integers in WebAssembly are encoded with a variable length
+        // This function gets the form of variable-length code compression used to store an arbitrarily large integer in a small number of bytes
+        function encodeLEB128(v) {{
+          if (v < 0 || v > 0xffffffff) throw new RangeError("Can't encode " +v);
+          return lebLoopUntil(v, x => x >>> 7, (value, byte) => value === 0);
+        }}
+
+        function strToAscii(val) {{
+          var res = [];
+          for (var i=0; i < val.length; i++) {{
+            res.push(val.charCodeAt(i));
+          }}
+          return res;
+        }}
+
+        function appendFunction(funcIdx, func, sig){{
+          var funcIdAscii = strToAscii(funcIdx.toString());
+
+          // adding info into [types] section
+          var typeIdx = typesArr.indexOf(sig);
+          if (typeIdx === -1) {{
+            // func form
+            typeSectionArr.push(0x60);
+
+            var sigRet = sig.slice(0, 1);
+            var sigParam = sig.slice(1);
+
+            // Parameters, length + signatures
+            typeSectionArr.push(sigParam.length);
+            for (var i = 0; i < sigParam.length; ++i) {{
+              typeSectionArr.push(typeCodes[sigParam[i]]);
+            }}
+            // Return values, length + signatures
+            // With no multi-return in MVP, either 0 (void) or 1 (anything else)
+            if (sigRet == 'v') {{
+              typeSectionArr.push(0x00);
+            }}
+            else {{
+              typeSectionArr.push(0x01, typeCodes[sigRet]);
+            }}
+            // store sig into types to prevent duplicate types
+            typeIdx = typesArr.push(sig) - 1;
+          }}
+
+          /* adding info into [import] section
+           * e.g. (import "e" "foo" (func (param i32 i32)))
+           * 0x01             ; string length
+           * 0x65             ; "e" import module name
+           * 0x03             ; string length
+           * 0x666f 6f        ; "foo" import field name
+           * 0x00             ; import kind
+           * 0xa902           ; import type index
+           */
+          importsArr.push(1, 101, funcIdAscii.length, ...funcIdAscii, 0, ...encodeLEB128(typeIdx));
+
+          /* adding info into [export] section
+           * e.g. (export "foo" (func $1)))
+           * 0x03             ; string length
+           * 0x666f 6f        ; "foo" export name
+           * 0x00             ; export kind
+           * 0x01             ; export func index
+           */
+          exportsArr.push(funcIdAscii.length, ...funcIdAscii, 0, ...encodeLEB128(funcIdx));
+
+          fullname = "fp$" + func;
+          // BEN_TODO: populate this function to match the previous implementation here
+          var fn = globalThis[fullname];
+          if (!fn) {{ {assertMsg}
+            fn = {side}Module[func] || globalThis[func]
+          }}
+          funcMap[funcIdx] = fn;
+        }}
+
+        for (var i=0; i < externFunctions.length; i++){{
+          var splitFunc = externFunctions[i].split("$");
+          appendFunction(i, splitFunc[0], splitFunc[1]);
+        }}
+
+        // the LEB encoded length could be 1 or 2 bytes.
+        // this overwrites the place holder and inserts the length into the 3rd index of the array
+        typeSectionArr.splice(2, 1, ...encodeLEB128(typesArr.length));
+        typeSectionArr.splice(1, 1, ...encodeLEB128(typeSectionArr.length - 2));
+
+        importsArr.splice(2, 1, ...encodeLEB128(externFunctions.length));
+        importsArr.splice(1, 1, ...encodeLEB128(importsArr.length - 2));
+
+        exportsArr.splice(2, 1, ...encodeLEB128(externFunctions.length));
+        exportsArr.splice(1, 1, ...encodeLEB128(exportsArr.length - 2));
+
+        // have to split this into separate parts because after optimization, it returns
+        // Uncaught RangeError: Maximum call stack size exceeded if the arrays are huge
+        wasmModuleArr.push(...typeSectionArr);
+        wasmModuleArr.push(...importsArr);
+        wasmModuleArr.push(...exportsArr);
+
+        var wasmModuleBytes = new Uint8Array(wasmModuleArr);
+        var module = new WebAssembly.Module(wasmModuleBytes);
+        var wasmExports = new WebAssembly.Instance(module, {{'e': funcMap}}).exports;
+
+        for (var i=0; i < externFunctions.length; i++){{
+          var splitFunc = externFunctions[i].split("$");
+          {side}Module["fp$"+externFunctions[i]] = addFunctionWasm(wasmExports[i], splitFunc[1]);
+        }}
+      }}
+      populatefpaccessors();
+      '''.format(side = side)
+
+
+    for extern in metadata['externFunctions']:
       fullname = "fp$" + extern
       key = '%sModule["%s"]' % (side, fullname)
       asm_setup += '''\
-    var %s = function() {
-      if (!%s) { %s
-        var fid = addFunction(%sModule["%s"] || %s, "%s");
-        %s = fid;
-      }
-      return %s;
-    }
-    ''' % (fullname, key, check(barename), side, barename, barename, sig, key, key)
+    var {fullname} = function() {{
+      return {key};
+    }}
+    '''.format(fullname = fullname, key = key)
 
   asm_setup += create_invoke_wrappers(invoke_function_names)
   asm_setup += setup_function_pointers(function_table_sigs)
