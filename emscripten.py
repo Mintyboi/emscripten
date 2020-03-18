@@ -1544,6 +1544,14 @@ def create_asm_setup(debug_tables, function_table_data, invoke_function_names, m
                 'from a system library, try to build the MAIN_MODULE with '
                 'EMCC_FORCE_STDLIBS=1 in the environment");')
       return ''
+    
+    def checkJSStr(extern):
+      if shared.Settings.ASSERTIONS:
+        return ('assert(%sModule[%s] || %s, "external symbol `%s` is missing.' % (side, extern, extern, extern) +
+                'perhaps a side module was not linked in? if this symbol was expected to arrive '
+                'from a system library, try to build the MAIN_MODULE with '
+                'EMCC_FORCE_STDLIBS=1 in the environment");')
+      return ''
 
     for extern in metadata['externs']:
       asm_setup += 'var g$' + extern + ' = function() {' + check(extern) + '\n  return ' + side + 'Module["' + extern + '"];\n}\n'
@@ -1666,7 +1674,6 @@ def create_asm_setup(debug_tables, function_table_data, invoke_function_names, m
           exportsArr.push(funcIdAscii.length, ...funcIdAscii, 0, ...encodeLEB128(funcIdx));
 
           fullname = "fp$" + func;
-          // BEN_TODO: populate this function to match the previous implementation here
           var fn = globalThis[fullname];
           if (!fn) {{ {assertMsg}
             fn = {side}Module[func] || globalThis[func]
@@ -1706,17 +1713,20 @@ def create_asm_setup(debug_tables, function_table_data, invoke_function_names, m
         }}
       }}
       populatefpaccessors();
-      '''.format(side = side)
+      '''.format(side = side, assertMsg = "")
 
 
     for extern in metadata['externFunctions']:
+      barename, sig = extern.split('$')
       fullname = "fp$" + extern
       key = '%sModule["%s"]' % (side, fullname)
       asm_setup += '''\
     var {fullname} = function() {{
+      // this is to have a hold on the global functions so that it does not get dce-ed
+      var fn = {side}Module["{barename}"] || {barename};
       return {key};
     }}
-    '''.format(fullname = fullname, key = key)
+    '''.format(fullname = fullname, side = side, barename = barename, key = key)
 
   asm_setup += create_invoke_wrappers(invoke_function_names)
   asm_setup += setup_function_pointers(function_table_sigs)
