@@ -327,7 +327,12 @@ def create_fp_accessors(metadata):
 Module['%(full)s'] = function() {
   %(assert)s
   // Use the original wasm function itself, for the table, from the main module.
-  var func = Module['asm']['%(original)s'];
+  var func = null;
+  var minifiedName = getReverseMapping()['%(original)s'];
+  if (minifiedName) {
+    func = Module['asm'][minifiedName];
+  }
+  if (!func) func = Module['asm']['%(original)s'];
   // Try an original version from a side module.
   if (!func) func = Module['_%(original)s'];
   // Otherwise, look for a regular function or JS library function.

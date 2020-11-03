@@ -58,3 +58,15 @@ var Atomics_load = Atomics.load;
 var Atomics_store = Atomics.store;
 var Atomics_compareExchange = Atomics.compareExchange;
 #endif
+
+var _gReverseMapping = null;
+function getReverseMapping() {
+    if (_gReverseMapping) 
+      return _gReverseMapping;
+
+    _gReverseMapping = {};
+    for (var key in Module.mapping) {
+        _gReverseMapping[Module.mapping[key]] = key
+    }
+    return _gReverseMapping
+}

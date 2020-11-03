@@ -1669,7 +1669,6 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         not shared.Settings.STANDALONE_WASM and \
         not shared.Settings.AUTODEBUG and \
         not shared.Settings.ASSERTIONS and \
-        not shared.Settings.RELOCATABLE and \
         not target.endswith(WASM_ENDINGS) and \
         not shared.Settings.ASYNCIFY_LAZY_LOAD_CODE and \
             shared.Settings.MINIFY_ASMJS_EXPORT_NAMES:
