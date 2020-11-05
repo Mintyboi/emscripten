@@ -330,8 +330,10 @@ Module['%(full)s'] = function() {
   var func = null;
   var minifiedName = getReverseMapping()['%(original)s'];
   if (minifiedName) {
+    // trying a function in the main module (fns in main module has been minified)
     func = Module['asm'][minifiedName];
   }
+  // trying a function in the side module (fns in side module are NOT minified)
   if (!func) func = Module['asm']['%(original)s'];
   // Try an original version from a side module.
   if (!func) func = Module['_%(original)s'];
